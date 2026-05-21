@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polymarket Paper Trading</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@4/marked.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, Segoe UI, Roboto, system-ui, sans-serif;
+         background:#0d1117; color:#c9d1d9; padding:16px; }
+  h1, h2, h3 { color:#e6edf3; }
+  h1 { font-size:1.5rem; margin:0 0 4px 0; }
+  h2 { font-size:1.15rem; margin:24px 0 8px 0; border-bottom:1px solid #30363d;
+        padding-bottom:6px; }
+  .sub { color:#8b949e; font-size:0.9rem; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:12px;
+            font-size:0.8rem; font-weight:600; }
+  .badge.running { background:#1f6feb; color:#fff; }
+  .badge.paused { background:#9e6a03; color:#fff; }
+  .badge.complete { background:#238636; color:#fff; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+            gap:12px; margin:16px 0; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:12px; }
+  .card .label { color:#8b949e; font-size:0.8rem; }
+  .card .val { font-size:1.4rem; font-weight:700; color:#e6edf3; }
+  .card .delta.pos { color:#3fb950; }
+  .card .delta.neg { color:#f85149; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media(max-width:760px){ .row{ grid-template-columns:1fr; } }
+  table { width:100%; border-collapse:collapse; font-size:0.85rem; margin-top:8px; }
+  th, td { padding:6px 8px; border-bottom:1px solid #21262d; text-align:left;
+            vertical-align:top; }
+  th { background:#161b22; color:#8b949e; font-weight:600; }
+  tr:hover td { background:#161b22; }
+  .pos { color:#3fb950; }
+  .neg { color:#f85149; }
+  .muted { color:#8b949e; }
+  .chart-wrap { background:#161b22; border:1px solid #30363d; border-radius:8px;
+                 padding:12px; height:300px; position:relative; }
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,0.7); display:none;
+            align-items:flex-start; justify-content:center; padding:24px;
+            overflow-y:auto; z-index:100; }
+  .modal.show { display:flex; }
+  .modal-content { background:#0d1117; border:1px solid #30363d; border-radius:8px;
+                    padding:20px; max-width:760px; width:100%; max-height:90vh;
+                    overflow-y:auto; }
+  .modal-content pre { white-space:pre-wrap; word-wrap:break-word; color:#c9d1d9;
+                        background:#161b22; padding:12px; border-radius:4px; }
+  .close { float:right; cursor:pointer; color:#8b949e; font-size:1.4rem; }
+  .clickable { cursor:pointer; }
+  .ok { color:#3fb950; }
+  .ko { color:#f85149; }
+  .pill { padding:2px 8px; border-radius:10px; font-size:0.75rem; font-weight:600; }
+  .pill.green { background:#0d4429; color:#3fb950; }
+  .pill.yellow { background:#4d3a06; color:#d29922; }
+  .pill.red { background:#4d0e0e; color:#f85149; }
+  .md { background:#161b22; border:1px solid #30363d; border-radius:8px;
+         padding:14px; max-height:400px; overflow-y:auto; font-size:0.88rem; }
+  .md h2 { font-size:1rem; margin:14px 0 6px 0; }
+  .md code { background:#0d1117; padding:1px 4px; border-radius:3px; }
+  .footer { color:#8b949e; font-size:0.8rem; text-align:center; margin-top:32px;
+             padding:16px; border-top:1px solid #30363d; }
+</style>
+</head>
+<body>
+
+<h1>Polymarket Paper Trading <span id="badge"></span></h1>
+<div class="sub">Day <span id="day"></span> of <span id="total-days"></span>
+  &nbsp;&middot;&nbsp; Updated <span id="updated"></span></div>
+
+<div class="cards" id="cards"></div>
+
+<h2>Equity Curve</h2>
+<div class="chart-wrap"><canvas id="equity-chart"></canvas></div>
+
+<h2>Decision Breakdown</h2>
+<div class="row">
+  <div class="chart-wrap"><canvas id="pie-chart"></canvas></div>
+  <div class="chart-wrap"><canvas id="skip-chart"></canvas></div>
+</div>
+
+<h2>Tail Markets Watch</h2>
+<div id="tail-watch"></div>
+
+<h2>Open Positions</h2>
+<div id="open-pos"></div>
+
+<h2>Recent Activity</h2>
+<div id="recent"></div>
+
+<h2>Per-Category Performance</h2>
+<div id="by-cat"></div>
+
+<h2>By Confidence</h2>
+<div id="by-conf"></div>
+
+<h2>By Resolution Horizon</h2>
+<div id="by-horizon"></div>
+
+<h2>Calibration Plot</h2>
+<div class="chart-wrap"><canvas id="cal-chart"></canvas></div>
+
+<h2>Calibration Health by Category</h2>
+<div id="cal-health"></div>
+
+<h2>Reasoning Components Tracker</h2>
+<div class="chart-wrap"><canvas id="rc-chart"></canvas></div>
+
+<h2>Watching Markets</h2>
+<div id="watching"></div>
+
+<h2>Latest Lessons</h2>
+<div class="md" id="lessons-md"></div>
+
+<h2>Strategy Recommendations</h2>
+<div class="md" id="strategy-md"></div>
+
+<h2>Routine Run Status (last 20)</h2>
+<div id="routine-runs"></div>
+
+<div class="footer">
+  Experiment: <span id="exp-start"></span> &mdash; <span id="exp-end"></span>
+  &nbsp;&middot;&nbsp; Generated <span id="gen-ts"></span>
+</div>
+
+<div class="modal" id="modal" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="modal-content">
+    <span class="close" onclick="document.getElementById('modal').classList.remove('show')">&times;</span>
+    <h3 id="modal-title"></h3>
+    <pre id="modal-body"></pre>
+  </div>
+</div>
+
+<script>
+const DATA = {"header": {"day": 1, "total_days": 28, "updated": "2026-05-21T18:57:00Z", "status": "Running", "start": "2026-05-21T18:53:53Z", "end": "2026-06-18T18:53:53Z"}, "cards": {"bankroll": 10000.0, "delta": 0.0, "roi": 0.0, "predictions": 0, "bets": 0, "wins": 0, "win_pct": 0, "open": 0, "cf_total": 0, "avg_edge": 0}, "equity": [], "cf_equity": [], "pie": {"bet": 0, "skip": 0}, "skip_reasons": [], "tail": {"lottery": {"n": 0, "wins": 0, "cf": 0.0}, "insurance": {"n": 0, "wins": 0, "cf": 0.0}, "total_cf": 0.0, "recommendation": "inconclusive"}, "open_positions": [], "recent": [], "by_cat": [], "by_conf": [], "by_horizon": [{"horizon": "6-24h", "n": 0, "cf": 0}, {"horizon": "1-3d", "n": 0, "cf": 0}, {"horizon": "3-7d", "n": 0, "cf": 0}, {"horizon": "7-30d", "n": 0, "cf": 0}, {"horizon": "30-90d", "n": 0, "cf": 0}], "calibration": [], "cal_health": [], "rc_scatter": [], "watching": [], "routine_runs": [], "lessons_md": "# Lessons Learned\n\nInstitutional memory. Updated weekly by Learn routine. Read by Predict routine.\n\n## Week 0 (Pre-Experiment)\n\n### Prior backtest findings (to VERIFY, not assume)\n\nWe ran backtests on 415 historical Polymarket markets (Feb-May 2026) with shallow rule-based predictions. Findings are HYPOTHESES for the live experiment:\n\n**Likely negative edge:**\n- CRYPTO_PRICE_TARGET: -80% ROI at 5d\n- SPORTS: -41% ROI\n- Narrow numeric bins (Elon tweet count): -57% ROI\n- SAG/Grammy: -33% ROI\n\n**Possibly positive edge:**\n- POLITICS at 24h: +164% ROI (information leak?)\n- Awards-other at 5d: +14% ROI\n- BUSINESS token launches at 5d: +45% ROI\n\n**Confidence: LOW**. Backtests used shallow predictions. Live experiment with deep reasoning + web search is different test.\n\n### Initial parameters\n\n- **MIN_HOURS_TO_RESOLUTION**: 6 (was 3 days in v2)\n- **MIN_EDGE_NORMAL**: 15pp (markets >72h)\n- **MIN_EDGE_SHORT**: 20pp (markets 6-72h)\n- **TAIL_THRESHOLD_LOW/HIGH**: 0.10/0.90 (binary tails watch-only)\n- **KELLY_FRACTION**: 0.5 (Half Kelly)\n- **MAX_TRADE_PCT**: 2% of bankroll\n\n### Initial shrinkage factors\n\nSet from intuition; will be empirically calibrated weekly:\n- POLITICS, POWER_CHANGE, ENTERTAINMENT, GEOPOLITICS, ELECTIONS, BUSINESS, SCI_TECH, HEALTH, OTHER: 0.85\n- ABSURD, WEATHER, CRYPTO_RANGE, CRYPTO_OTHER, EUROVISION: 0.90\n- MENTIONS, SPORTS, CRYPTO_DIRECTION, CRYPTO_PRICE_TARGET: 0.95\n\n### Calibration reminders\n\n- Always explicit: Base Rate \u2192 Evidence Adjustment \u2192 Final\n- LOW confidence is expected for ~40% of markets. Don't force HIGH.\n- No specific web info \u2192 confidence MUST be LOW.\n- Tail markets (binary, price <0.10 or >0.90): predict honestly, but bet rarely. Default: market is right.\n\n## Weekly entries below\n\n(Appended by Learn routine each Sunday)\n", "strategy_md": "# Strategy Recommendations\n\nUpdated weekly by Learn routine. Contains suggestions for Benedikt to manually review and apply.\n\n**The agent does NOT auto-apply.** Recommendations only.\n\n## Pending recommendations\n\n(none yet \u2014 populated after first weekly Learn run)\n\n## How recommendations work\n\nThe Learn routine analyzes each week and may suggest:\n- Parameter changes (e.g., \"Lower MIN_EDGE_NORMAL from 0.15 to 0.12 for politics\")\n- Shrinkage factor adjustments (per category, based on calibration data)\n- Category strategy changes (e.g., \"CRYPTO_RANGE shows positive edge \u2014 increase position size\")\n- Hypothesis updates (move from \"testing\" to \"confirmed/refuted\" in HYPOTHESES.md)\n\nTo apply a recommendation:\n1. Review reasoning in this file\n2. Edit `agent.py` (e.g., update SHRINKAGE_FACTORS dict)\n3. Update lessons.md with note of change\n4. System continues with new parameters from next execute run\n"};
+
+function fmt$(n){ return '$' + Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function pct(n){ return Number(n).toFixed(1) + '%'; }
+function esc(s){ return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function showModal(title, body){
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').textContent = body;
+  document.getElementById('modal').classList.add('show');
+}
+function showPos(i){
+  const p = DATA.open_positions[i];
+  if(p) showModal('Position: ' + p.question, p.reasoning || p.summary || '(no reasoning)');
+}
+function showRecent(i){
+  const r = DATA.recent[i];
+  if(r) showModal(r.question || '', r.reasoning || r.summary || '(no reasoning)');
+}
+
+// Header
+document.getElementById('day').textContent = DATA.header.day;
+document.getElementById('total-days').textContent = DATA.header.total_days;
+document.getElementById('updated').textContent = DATA.header.updated;
+document.getElementById('exp-start').textContent = DATA.header.start;
+document.getElementById('exp-end').textContent = DATA.header.end;
+document.getElementById('gen-ts').textContent = DATA.header.updated;
+const badge = document.getElementById('badge');
+badge.textContent = DATA.header.status;
+badge.className = 'badge ' + DATA.header.status.toLowerCase();
+
+// Cards
+const c = DATA.cards;
+const cardSpec = [
+  ['Bankroll', fmt$(c.bankroll), c.delta, true],
+  ['Realized ROI', pct(c.roi), null, false],
+  ['Predictions', c.predictions, null, false],
+  ['Bets Placed', c.bets, null, false],
+  ['Wins', c.wins + ' (' + pct(c.win_pct) + ')', null, false],
+  ['Open Positions', c.open, null, false],
+  ['Counterfactual P&L', fmt$(c.cf_total), c.cf_total, true],
+  ['Avg Edge of bets', pct(c.avg_edge), null, false],
+];
+document.getElementById('cards').innerHTML = cardSpec.map(([lab,val,d,dol])=>{
+  let dClass = '';
+  let dStr = '';
+  if(d!==null){
+    const isPos = Number(d)>=0;
+    dClass = isPos?'pos':'neg';
+    dStr = '<div class="delta '+dClass+'">'+(isPos?'+':'')+(dol?fmt$(d):pct(d))+'</div>';
+  }
+  return '<div class="card"><div class="label">'+lab+'</div><div class="val">'+val+'</div>'+dStr+'</div>';
+}).join('');
+
+// Equity chart
+const equityCtx = document.getElementById('equity-chart').getContext('2d');
+new Chart(equityCtx, {
+  type:'line',
+  data:{
+    datasets:[
+      {label:'Realized', data:DATA.equity.map(p=>({x:p.t,y:p.v})),
+       borderColor:'#3fb950', backgroundColor:'rgba(63,185,80,0.1)', tension:0.2, fill:false},
+      {label:'Counterfactual', data:DATA.cf_equity.map(p=>({x:p.t,y:p.v})),
+       borderColor:'#1f6feb', backgroundColor:'rgba(31,111,235,0.1)',
+       tension:0.2, fill:false, borderDash:[5,5]},
+    ]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    scales:{x:{type:'time',ticks:{color:'#8b949e'}},
+            y:{ticks:{color:'#8b949e',callback:v=>'$'+v}}},
+    plugins:{legend:{labels:{color:'#c9d1d9'}}}
+  }
+});
+
+// Pie
+new Chart(document.getElementById('pie-chart').getContext('2d'),{
+  type:'doughnut',
+  data:{labels:['Bet','Skip'],datasets:[{data:[DATA.pie.bet,DATA.pie.skip],
+     backgroundColor:['#3fb950','#8b949e']}]},
+  options:{responsive:true,maintainAspectRatio:false,
+           plugins:{legend:{labels:{color:'#c9d1d9'}},title:{display:true,text:'Bet vs Skip',color:'#c9d1d9'}}}
+});
+
+// Skip reasons bar (with cf_pnl color)
+const skipLabels = DATA.skip_reasons.map(s=>s.reason);
+const skipCounts = DATA.skip_reasons.map(s=>s.n);
+const skipCf = DATA.skip_reasons.map(s=>s.cf_pnl);
+new Chart(document.getElementById('skip-chart').getContext('2d'),{
+  type:'bar',
+  data:{labels:skipLabels,datasets:[
+    {label:'Count', data:skipCounts, backgroundColor:'#8b949e', yAxisID:'y'},
+    {label:'cf P&L ($)', data:skipCf,
+     backgroundColor:skipCf.map(v=>v>=0?'#3fb950':'#f85149'), yAxisID:'y1'},
+  ]},
+  options:{responsive:true,maintainAspectRatio:false,
+    scales:{
+      y:{position:'left',ticks:{color:'#8b949e'},title:{display:true,text:'Count',color:'#8b949e'}},
+      y1:{position:'right',ticks:{color:'#8b949e'},title:{display:true,text:'cf P&L',color:'#8b949e'},
+          grid:{drawOnChartArea:false}},
+      x:{ticks:{color:'#8b949e'}}
+    },
+    plugins:{legend:{labels:{color:'#c9d1d9'}}}
+  }
+});
+
+// Tail watch
+const t = DATA.tail;
+document.getElementById('tail-watch').innerHTML = `
+  <table>
+    <tr><th>Side</th><th>N</th><th>Wins</th><th>cf P&L</th></tr>
+    <tr><td>Lottery (YES @ &lt;0.10)</td><td>${t.lottery.n}</td><td>${t.lottery.wins}</td>
+        <td class="${t.lottery.cf>=0?'pos':'neg'}">${fmt$(t.lottery.cf)}</td></tr>
+    <tr><td>Insurance (NO @ &gt;0.90)</td><td>${t.insurance.n}</td><td>${t.insurance.wins}</td>
+        <td class="${t.insurance.cf>=0?'pos':'neg'}">${fmt$(t.insurance.cf)}</td></tr>
+    <tr><td><b>Total</b></td><td colspan="2"><b>Recommendation: ${esc(t.recommendation)}</b></td>
+        <td class="${t.total_cf>=0?'pos':'neg'}"><b>${fmt$(t.total_cf)}</b></td></tr>
+  </table>`;
+
+// Open positions
+if(DATA.open_positions.length){
+  let html = '<table><tr><th>Question</th><th>Side</th><th>Stake</th><th>p_my</th><th>p_mkt</th><th>Edge</th><th>Days</th></tr>';
+  DATA.open_positions.forEach((p,i)=>{
+    html += `<tr class="clickable" onclick="showPos(${i})">
+      <td>${esc(p.question).slice(0,80)}</td><td>${esc(p.side).toUpperCase()}</td>
+      <td>${fmt$(p.stake)}</td><td>${p.p_my}</td><td>${p.p_mkt}</td>
+      <td>${p.edge}</td><td>${p.days_to_res!==null?p.days_to_res:'-'}</td></tr>`;
+  });
+  html += '</table>';
+  document.getElementById('open-pos').innerHTML = html;
+} else {
+  document.getElementById('open-pos').innerHTML = '<div class="muted">No open positions.</div>';
+}
+
+// Recent activity
+if(DATA.recent.length){
+  let html = '<table><tr><th>When</th><th>Kind</th><th>Question</th><th>Detail</th></tr>';
+  DATA.recent.forEach((r,i)=>{
+    const c = r.good===true?'pos':(r.good===false?'neg':'muted');
+    html += `<tr class="clickable" onclick="showRecent(${i})">
+      <td class="muted">${esc(r.ts||'')}</td>
+      <td>${esc(r.kind)}</td>
+      <td>${esc(r.question||'').slice(0,80)}</td>
+      <td class="${c}">${esc(r.detail)}</td></tr>`;
+  });
+  html += '</table>';
+  document.getElementById('recent').innerHTML = html;
+} else {
+  document.getElementById('recent').innerHTML = '<div class="muted">No activity yet.</div>';
+}
+
+// By cat
+if(DATA.by_cat.length){
+  let html = '<table><tr><th>Category</th><th>N pred</th><th>N bet</th><th>Win%</th><th>Brier_my</th><th>Brier_mkt</th><th>ROI</th><th>Avg edge</th><th>cf Δ</th></tr>';
+  DATA.by_cat.forEach(r=>{
+    html += `<tr><td>${esc(r.category)}</td><td>${r.n_pred}</td><td>${r.n_bet}</td>
+      <td>${pct(r.win_pct)}</td><td>${r.brier_my}</td><td>${r.brier_mkt}</td>
+      <td>${pct(r.roi)}</td><td>${r.avg_edge}</td>
+      <td class="${r.cf>=0?'pos':'neg'}">${fmt$(r.cf)}</td></tr>`;
+  });
+  html += '</table>';
+  document.getElementById('by-cat').innerHTML = html;
+} else {
+  document.getElementById('by-cat').innerHTML = '<div class="muted">No categorized data yet.</div>';
+}
+
+// By confidence
+if(DATA.by_conf.length){
+  let html = '<table><tr><th>Confidence</th><th>N</th><th>Bets</th><th>cf P&L</th></tr>';
+  DATA.by_conf.forEach(r=>{
+    html += `<tr><td>${esc(r.confidence)}</td><td>${r.n}</td><td>${r.bets}</td>
+      <td class="${r.cf>=0?'pos':'neg'}">${fmt$(r.cf)}</td></tr>`;
+  });
+  html += '</table>';
+  document.getElementById('by-conf').innerHTML = html;
+} else {
+  document.getElementById('by-conf').innerHTML = '<div class="muted">No confidence data yet.</div>';
+}
+
+// By horizon
+let hHtml = '<table><tr><th>Horizon</th><th>N</th><th>cf P&L</th></tr>';
+DATA.by_horizon.forEach(r=>{
+  hHtml += `<tr><td>${esc(r.horizon)}</td><td>${r.n}</td>
+    <td class="${r.cf>=0?'pos':'neg'}">${fmt$(r.cf)}</td></tr>`;
+});
+hHtml += '</table>';
+document.getElementById('by-horizon').innerHTML = hHtml;
+
+// Calibration
+new Chart(document.getElementById('cal-chart').getContext('2d'),{
+  type:'scatter',
+  data:{datasets:[
+    {label:'Predicted vs Actual',
+     data:DATA.calibration.map(b=>({x:b.x,y:b.y})),
+     backgroundColor:'#3fb950', pointRadius:6},
+    {type:'line',label:'Perfect calibration',
+     data:[{x:0,y:0},{x:1,y:1}],
+     borderColor:'#8b949e', borderDash:[5,5], pointRadius:0, fill:false},
+  ]},
+  options:{responsive:true,maintainAspectRatio:false,
+    scales:{
+      x:{min:0,max:1,ticks:{color:'#8b949e'},title:{display:true,text:'Predicted',color:'#8b949e'}},
+      y:{min:0,max:1,ticks:{color:'#8b949e'},title:{display:true,text:'Actual frequency',color:'#8b949e'}},
+    },plugins:{legend:{labels:{color:'#c9d1d9'}}}
+  }
+});
+
+// Cal health
+if(DATA.cal_health.length){
+  let html = '<table><tr><th>Category</th><th>N</th><th>Mean p_raw</th><th>Mean outcome</th><th>Current factor</th><th>Recommended</th><th>Health</th></tr>';
+  DATA.cal_health.forEach(r=>{
+    html += `<tr><td>${esc(r.category)}</td><td>${r.n}</td><td>${r.mean_p}</td>
+      <td>${r.mean_outcome}</td><td>${r.current_factor}</td>
+      <td>${r.rec_factor!==null?r.rec_factor+' (Δ Brier '+r.rec_brier+')':'-'}</td>
+      <td><span class="pill ${r.color}">${r.color}</span></td></tr>`;
+  });
+  html += '</table>';
+  document.getElementById('cal-health').innerHTML = html;
+} else {
+  document.getElementById('cal-health').innerHTML = '<div class="muted">No calibration data yet.</div>';
+}
+
+// RC scatter
+new Chart(document.getElementById('rc-chart').getContext('2d'),{
+  type:'scatter',
+  data:{datasets:[{
+    label:'Base rate vs evidence adjustment',
+    data:DATA.rc_scatter.map(p=>({x:p.x,y:p.y})),
+    backgroundColor:DATA.rc_scatter.map(p=>p.o===1?'#3fb950':'#f85149'),
+    pointRadius:5,
+  }]},
+  options:{responsive:true,maintainAspectRatio:false,
+    scales:{x:{ticks:{color:'#8b949e'},title:{display:true,text:'Base rate',color:'#8b949e'}},
+            y:{ticks:{color:'#8b949e'},title:{display:true,text:'Evidence adjustment',color:'#8b949e'}}},
+    plugins:{legend:{labels:{color:'#c9d1d9'}}}
+  }
+});
+
+// Watching
+if(DATA.watching.length){
+  let html = '<table><tr><th>Question</th><th>Category</th><th>Volume</th><th>YES price</th><th>My p</th><th>Days</th></tr>';
+  DATA.watching.forEach(r=>{
+    html += `<tr><td>${esc(r.question).slice(0,80)}</td><td>${esc(r.category)}</td>
+      <td>${fmt$(r.volume)}</td><td>${r.yes_price!==null?r.yes_price:'-'}</td>
+      <td>${r.my_p!==null?r.my_p:'-'}</td>
+      <td>${r.days_to_res!==null?r.days_to_res:'-'}</td></tr>`;
+  });
+  html += '</table>';
+  document.getElementById('watching').innerHTML = html;
+} else {
+  document.getElementById('watching').innerHTML = '<div class="muted">No watching markets.</div>';
+}
+
+// Lessons + strategy
+try { document.getElementById('lessons-md').innerHTML = marked.parse(DATA.lessons_md || ''); }
+catch(e){ document.getElementById('lessons-md').textContent = DATA.lessons_md || ''; }
+try { document.getElementById('strategy-md').innerHTML = marked.parse(DATA.strategy_md || ''); }
+catch(e){ document.getElementById('strategy-md').textContent = DATA.strategy_md || ''; }
+
+// Routine runs
+if(DATA.routine_runs.length){
+  let html = '<table><tr><th>Slot</th><th>Started</th><th>Completed</th><th>Cands</th><th>Preds</th><th>OK?</th><th>Error</th></tr>';
+  DATA.routine_runs.forEach(r=>{
+    html += `<tr><td>${esc(r.slot)}</td><td class="muted">${esc(r.started_at||'')}</td>
+      <td class="muted">${esc(r.completed_at||'')}</td>
+      <td>${r.candidates_count||0}</td><td>${r.predictions_made||0}</td>
+      <td class="${r.success?'ok':'ko'}">${r.success?'OK':'FAIL'}</td>
+      <td class="muted">${esc(r.error_message||'')}</td></tr>`;
+  });
+  html += '</table>';
+  document.getElementById('routine-runs').innerHTML = html;
+} else {
+  document.getElementById('routine-runs').innerHTML = '<div class="muted">No routine runs yet.</div>';
+}
+
+// Auto-refresh
+setTimeout(()=>location.reload(), 60000);
+</script>
+</body></html>
